@@ -147,12 +147,16 @@ typedef void (*SimplePatternList[])();
 SimplePatternList gPatterns = {solid, rainbow, rainbowWithGlitter, solidRainbow, confetti, sinelon, juggle, bpm};
 std::map<String, int> animMap{{"solid", 0}, {"rainbow", 1}, {"rainbowWithGlitter", 2}, {"solidRainbow", 3}, {"confetti", 4}, {"sinelon", 5}, {"juggle", 6}, {"bpm", 7}};
 
-int getAnimation(String animationName) {
+void changeAnimation(String animationName) {
     std::map<String, int>::iterator anim = animMap.find(animationName);
     if (anim == animMap.end()) {
-        return -1;
+        return;
     } else {
-        return anim->second;
+        switch (anim->second) {
+            case 0: changeHue = false; break;
+            case 3: changeHue = true; break;
+        }
+        gCurrentPatternNumber = anim->second;
     }
 }
 
@@ -202,10 +206,11 @@ void handleRoot()
             if (server.argName(i).equalsIgnoreCase("color"))
             {
                 setColor(server.arg(i));
-                gCurrentPatternNumber = animMap["solid"];
-                changeHue = false;
+                /**gCurrentPatternNumber = animMap["solid"];
+                changeHue = false;*/
+                changeAnimation("solid");
             } else if (server.argName(i).equalsIgnoreCase("animation")) {
-                gCurrentPatternNumber = getAnimation(server.arg(i));
+                changeAnimation(server.arg(i));
             } else if (server.argName(i).equalsIgnoreCase("changeHue")) {
                 changeHue = server.arg(i).equalsIgnoreCase("true") ? true : false; 
             } else if (server.argName(i).equalsIgnoreCase("toggleHueRotation")) {
