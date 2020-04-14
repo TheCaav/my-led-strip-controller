@@ -49,33 +49,39 @@
 #define COLOR_ORDER GRB  // It's GRB for WS2812B and BGR for APA102
 #define LED_TYPE WS2812B // What kind of strip are you using (APA102, WS2801 or WS2812B)?
 #define NUM_LEDS 30
-#define MAX_BRIGHT 255
-#define FREQUENCY 30
+#define MAX_BRIGHT 180
 
 struct CRGB leds[NUM_LEDS];
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
-CHSV gHSVColor = CHSV(0,0,0);                  // rotating "base color" used by many of the patterns
+CHSV gHSVColor = CHSV(0, 0, 0);    // rotating "base color" used by many of the patterns
 CRGB gRGBColor = CRGB(0);
 bool changeHue = true;
 
-void solid() {
+float bpm_freq = 30;
+
+void solid()
+{
     /**for (int i = 0; i < NUM_LEDS; i++) {
         leds[i] = gRGBColor;
     }*/
     FastLED.showColor(gRGBColor);
 }
 
-void solidRainbow() {
+void solidRainbow()
+{
     CRGB rgb;
     hsv2rgb_rainbow(CHSV(gHSVColor.hue, 255, 255), rgb);
-    for (int i = 0; i < NUM_LEDS; i++) {
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
         leds[i] = rgb;
     }
 }
 
-void maybeChangeHue() {
-    if (changeHue) {
+void maybeChangeHue()
+{
+    if (changeHue)
+    {
         gHSVColor.hue++;
     }
 }
@@ -146,20 +152,97 @@ void juggle()
 typedef void (*SimplePatternList[])();
 SimplePatternList gPatterns = {solid, rainbow, rainbowWithGlitter, solidRainbow, confetti, sinelon, juggle, bpm};
 std::map<String, int> animMap{{"solid", 0}, {"rainbow", 1}, {"rainbowWithGlitter", 2}, {"solidRainbow", 3}, {"confetti", 4}, {"sinelon", 5}, {"juggle", 6}, {"bpm", 7}};
+std::map<String, CRGB> colCorMap{{"UncorrectedColor", UncorrectedColor}, {"TypicalLEDStrip", TypicalLEDStrip}, {"MyWS2812b", CRGB(153, 238, 255)}};
+std::map<String, CRGB> colTempMap{{"UncorrectedTemperature", UncorrectedTemperature}, {"ClearBlueSky", ClearBlueSky}, {"DirectSunlight", DirectSunlight}, {"Candle", Candle}};
 
-void changeAnimation(String animationName) {
+void changeAnimation(String animationName)
+{
     std::map<String, int>::iterator anim = animMap.find(animationName);
-    if (anim == animMap.end()) {
+    if (anim == animMap.end())
+    {
         return;
-    } else {
-        switch (anim->second) {
-            case 0: changeHue = false; break;
-            case 3: changeHue = true; break;
+    }
+    else
+    {
+        switch (anim->second)
+        {
+        case 0:
+            changeHue = false;
+            break;
+        case 3:
+            changeHue = true;
+            break;
         }
         gCurrentPatternNumber = anim->second;
     }
 }
 
+void setBrightness(int brightness)
+{
+    if (brightness > 255)
+    {
+        brightness = 255;
+        Serial.println("Brightness to high. Defaulted to 255");
+    }
+    else if (brightness < 0)
+    {
+        brightness = 0;
+        Serial.println("Brightness to low. Defaulted to 0");
+    }
+    FastLED.setBrightness(brightness);
+}
+
+void setFrequency(float frequency) {
+    if (frequency <= 0) {
+        Serial.printf("Frequency too low. Set to 1");
+        frequency = 1;
+    } else if (frequency > 9000) {
+        Serial.printf("FREQUENCY IS OVER 9000!!!");
+        frequency = 9000;
+    } else {
+        bpm_freq = frequency;
+    }
+}
+
+void setColorCorrection(String correction)
+{
+    if (correction.startsWith("0x"))
+    {
+        FastLED.setCorrection(CRGB(hexToInt(correction)));
+    }
+    else
+    {
+        std::map<String, CRGB>::iterator corr = colCorMap.find(correction);
+        if (corr == colCorMap.end())
+        {
+            return;
+        }
+        else
+        {
+            FastLED.setCorrection(corr->second);
+        }
+    }
+}
+
+void setColorTemperature(String temperature)
+{
+    if (temperature.startsWith("0x"))
+    {
+        FastLED.setTemperature(CRGB(hexToInt(temperature)));
+    }
+    else
+    {
+        std::map<String, CRGB>::iterator temp = colTempMap.find(temperature);
+        if (temp == colTempMap.end())
+        {
+            return;
+        }
+        else
+        {
+            FastLED.setCorrection(temp->second);
+        }
+    }
+}
 
 void setColor(String color)
 {
@@ -169,9 +252,8 @@ void setColor(String color)
 
 void setupLEDS()
 {
-    FastLED.addLeds<LED_TYPE, LED_DT, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-    FastLED.setTemperature(ClearBlueSky);
-
+    FastLED.addLeds<LED_TYPE, LED_DT, COLOR_ORDER>(leds, NUM_LEDS);
+    FastLED.setCorrection(CRGB(153, 228, 255));
     FastLED.setBrightness(MAX_BRIGHT);
     FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
 }
@@ -209,12 +291,26 @@ void handleRoot()
                 /**gCurrentPatternNumber = animMap["solid"];
                 changeHue = false;*/
                 changeAnimation("solid");
-            } else if (server.argName(i).equalsIgnoreCase("animation")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("animation"))
+            {
                 changeAnimation(server.arg(i));
-            } else if (server.argName(i).equalsIgnoreCase("changeHue")) {
-                changeHue = server.arg(i).equalsIgnoreCase("true") ? true : false; 
-            } else if (server.argName(i).equalsIgnoreCase("toggleHueRotation")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("changeHue"))
+            {
+                changeHue = server.arg(i).equalsIgnoreCase("true") ? true : false;
+            }
+            else if (server.argName(i).equalsIgnoreCase("toggleHueRotation"))
+            {
                 changeHue = changeHue ? false : true;
+            } else if (server.argName(i).equalsIgnoreCase("ColorCorrection")) {
+                setColorCorrection(server.arg(i));
+            } else if (server.argName(i).equalsIgnoreCase("ColorTemperature")) {
+                setColorTemperature(server.arg(i));
+            } else if (server.argName(i).equalsIgnoreCase("Brightness")) {
+                setBrightness(server.arg(i).toInt());
+            } else if (server.argName(i).equalsIgnoreCase("Frequency")) {
+                setFrequency(server.arg(i).toFloat());
             }
         }
         server.send(200, "text/plain", message);
@@ -247,10 +343,11 @@ void setup()
 void loop()
 {
     server.handleClient();
-    EVERY_N_MILLIS(1000 / FREQUENCY)
+    EVERY_N_MILLIS(60000 / bpm_freq)
     {
         gPatterns[gCurrentPatternNumber]();
-        if (gCurrentPatternNumber != 0) { // hack to suppress flickering caused by setting colors shortly after each other
+        if (gCurrentPatternNumber != 0)
+        { // hack to suppress flickering caused by setting colors shortly after each other
             FastLED.show();
         }
         maybeChangeHue();
