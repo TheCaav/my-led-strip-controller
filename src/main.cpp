@@ -31,25 +31,37 @@
 /* Create a WiFi access point and provide a web server on it. */
 
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <Arduino.h>
 #include <FastLED.h>
+#include <PubSubClient.h>
 #include <map>
 
 #include <misc_functions.h>
 
 #ifndef APSSID
-#define APSSID "ESPap"
-#define APPSK "thereisnospoon"
+#define STASSID "raspi-webgui";
+#define STAPSK "PLACEHOLDER"
 #endif
+
+const char *ssid = STASSID;
+const char *password = STAPSK;
+const char* mqtt_server = "10.3.141.1";
 
 #define LED_DT D2        // Serial data pin
 #define LED_CK 11        // Clock pin for WS2801 or APA102
 #define COLOR_ORDER GRB  // It's GRB for WS2812B and BGR for APA102
 #define LED_TYPE WS2812B // What kind of strip are you using (APA102, WS2801 or WS2812B)?
+String led_type = "WS2812B";
 #define NUM_LEDS 30
 #define MAX_BRIGHT 180
+
+#define identifier 1
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+long lastMsg = 0;
+char msg[50];
 
 struct CRGB leds[NUM_LEDS];
 
@@ -58,7 +70,26 @@ CHSV gHSVColor = CHSV(0, 0, 0);    // rotating "base color" used by many of the 
 CRGB gRGBColor = CRGB(0);
 bool changeHue = true;
 
-float bpm_freq = 30;
+float bpm_freq = 120;
+
+void mqttconnect()
+{
+    /* Loop until reconnected */
+    Serial.print("MQTT connecting ...");
+    /* client ID */
+    String clientId = "ESP32LED";
+    /* connect now */
+    if (client.connect(clientId.c_str()))
+    {
+        Serial.println("connected");
+        client.subscribe("/family/CalvinsRoom/LED", 0);
+    }
+    else
+    {
+        Serial.print("failed, status code =");
+        Serial.print(client.state());
+    }
+}
 
 void solid()
 {
@@ -127,7 +158,7 @@ void sinelon()
 void bpm()
 {
     // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
-    uint8_t BeatsPerMinute = 62;
+    uint8_t BeatsPerMinute = 120;
     CRGBPalette16 palette = PartyColors_p;
     uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
     for (int i = 0; i < NUM_LEDS; i++)
@@ -192,14 +223,20 @@ void setBrightness(int brightness)
     FastLED.setBrightness(brightness);
 }
 
-void setFrequency(float frequency) {
-    if (frequency <= 0) {
+void setFrequency(float frequency)
+{
+    if (frequency <= 0)
+    {
         Serial.printf("Frequency too low. Set to 1");
         frequency = 1;
-    } else if (frequency > 9000) {
+    }
+    else if (frequency > 9000)
+    {
         Serial.printf("FREQUENCY IS OVER 9000!!!");
         frequency = 9000;
-    } else {
+    }
+    else
+    {
         bpm_freq = frequency;
     }
 }
@@ -250,6 +287,82 @@ void setColor(String color)
     gHSVColor = rgb2hsv_approximate(gRGBColor); // not really working I believe. Maybe research HSV more
 }
 
+String printUsage()
+{
+    String string = "";
+
+    // Current Status:
+    string += "Current Status of the led controller " + String(identifier) + ":\n";
+    string += "Wifi SSID is: ";
+    string += ssid;
+    string += "\n";
+    string += "Type of strip: " + led_type + "\n";
+    string += "Number of leds: " + String(NUM_LEDS) + "\n";
+    string += "============================================\n";
+    string += "Current Brightness: " + String(FastLED.getBrightness());
+    string += "\n";
+    string += "Current Color (if applicable):\n";
+    string += "red: " + String(gRGBColor.red);
+    string += "green: " + String(gRGBColor.green);
+    string += "blue: " + String(gRGBColor.blue);
+    string += "\n";
+    string += "Current Frequency: " + String(bpm_freq);
+    string += "\n";
+    string += "Rotating Hue? " + String(changeHue);
+    string += "\n";
+    string += "Current Hue: " + String(gHSVColor.hue);
+    string += "\n";
+    string += "Current Animation: \n";
+    for (std::map<String, int>::iterator i = animMap.begin(); i != animMap.end(); i++)
+    {
+        if (i->second == gCurrentPatternNumber)
+        {
+            string += i->first;
+        }
+    }
+    string += "\n";
+    string += "============================================\n";
+    string += "USAGE: \n";
+    string += "To change animation \n";
+    string += "animation=<animation name> \n";
+    string += "Number of Animations: " + String(animMap.size());
+    string += "\n";
+    string += "List of possible Animations: \n";
+    for (std::map<String, int>::iterator i = animMap.begin(); i != animMap.end(); i++)
+    {
+        string += i->first;
+        string += "\n";
+    }
+    string += "Set Brightness: \n";
+    string += "brightness=<0-255>\n";
+    string += "Set Frequency: \n";
+    string += "frequency=<0.*-9000>\n";
+    string += "Set Color (Changes animation to solid and disables hue rotation)\n";
+    string += "color=0x......\n";
+    string += "Set Hue Rotation (if applicable):\n";
+    string += "changeHue=<true | false>\n";
+    string += "Toggle Hue Rotation (if applicable):\n";
+    string += "toggleHueRotation=<doesnt matter>\n";
+    string += "Set Color Correction: \n";
+    string += "ColorCorrection=<0x...... | identifier>\n";
+    string += "With Identifier being oBYip3sj5pbnYtswmM3r4ne of: \n";
+    for (std::map<String, CRGB>::iterator i = colCorMap.begin(); i != colCorMap.end(); i++)
+    {
+        string += i->first;
+        string += "\n";
+    }
+    string += "Set Color Temperature: \n";
+    string += "ColorTemperature=<0x...... | identifier>\n";
+    string += "With Identifier being one of: \n";
+    for (std::map<String, CRGB>::iterator i = colTempMap.begin(); i != colTempMap.end(); i++)
+    {
+        string += i->first;
+        string += "\n";
+    }
+
+    return string;
+}
+
 void setupLEDS()
 {
     FastLED.addLeds<LED_TYPE, LED_DT, COLOR_ORDER>(leds, NUM_LEDS);
@@ -257,10 +370,6 @@ void setupLEDS()
     FastLED.setBrightness(MAX_BRIGHT);
     FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
 }
-
-/* Set these to your desired credentials. */
-const char *ssid = APSSID;
-const char *password = APPSK;
 
 ESP8266WebServer server(80);
 
@@ -303,14 +412,26 @@ void handleRoot()
             else if (server.argName(i).equalsIgnoreCase("toggleHueRotation"))
             {
                 changeHue = changeHue ? false : true;
-            } else if (server.argName(i).equalsIgnoreCase("ColorCorrection")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("ColorCorrection"))
+            {
                 setColorCorrection(server.arg(i));
-            } else if (server.argName(i).equalsIgnoreCase("ColorTemperature")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("ColorTemperature"))
+            {
                 setColorTemperature(server.arg(i));
-            } else if (server.argName(i).equalsIgnoreCase("Brightness")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("Brightness"))
+            {
                 setBrightness(server.arg(i).toInt());
-            } else if (server.argName(i).equalsIgnoreCase("Frequency")) {
+            }
+            else if (server.argName(i).equalsIgnoreCase("Frequency"))
+            {
                 setFrequency(server.arg(i).toFloat());
+            }
+            else if (server.argName(i).equalsIgnoreCase("Usage"))
+            {
+                message += printUsage();
             }
         }
         server.send(200, "text/plain", message);
@@ -321,37 +442,133 @@ void handleRoot()
     }
 }
 
+void printMessage(byte *message, unsigned int length)
+{
+    for (unsigned int i = 0; i < length; i++)
+    {
+        Serial.print((char)message[i]);
+    }
+    Serial.println("");
+}
+
+void callback(char *topic, byte *message, unsigned int length)
+{
+    Serial.print("Message arrived on topic: ");
+    Serial.print(topic);
+    Serial.print(". Message: ");
+    printMessage(message, length);
+    String arg;
+    String val;
+    bool value = false;
+
+    for (unsigned int i = 0; i < length; i++)
+    {
+        if ((char)message[i] == '=')
+        {
+            value = true;
+        }
+        else if (value)
+        {
+            val[i] += (char)message[i];
+        }
+        else
+        {
+            arg[i] += (char)message[i];
+        }
+    }
+
+    if (arg.equalsIgnoreCase("color"))
+    {
+        setColor(val);
+        /**gCurrentPatternNumber = animMap["solid"];
+                changeHue = false;*/
+        changeAnimation("solid");
+    }
+    else if (arg.equalsIgnoreCase("animation"))
+    {
+        changeAnimation(val);
+    }
+    else if (arg.equalsIgnoreCase("changeHue"))
+    {
+        changeHue = val.equalsIgnoreCase("true") ? true : false;
+    }
+    else if (arg.equalsIgnoreCase("toggleHueRotation"))
+    {
+        changeHue = changeHue ? false : true;
+    }
+    else if (arg.equalsIgnoreCase("ColorCorrection"))
+    {
+        setColorCorrection(val);
+    }
+    else if (arg.equalsIgnoreCase("ColorTemperature"))
+    {
+        setColorTemperature(val);
+    }
+    else if (arg.equalsIgnoreCase("Brightness"))
+    {
+        setBrightness(val.toInt());
+    }
+    else if (arg.equalsIgnoreCase("Frequency"))
+    {
+        setFrequency(val.toFloat());
+    }
+}
+
 void setup()
 {
     delay(3000);
     Serial.begin(9600);
     Serial.println();
-    Serial.print("Configuring access point...");
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
     /* You can remove the password parameter if you want the AP to be open. */
-    WiFi.softAP(ssid, password);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
 
-    IPAddress myIP = WiFi.softAPIP();
-    Serial.print("AP IP address: ");
-    Serial.println(myIP);
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
+    }
+
+    WiFi.setAutoReconnect(true);
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
     server.on("/", handleRoot);
     server.begin();
     Serial.println("HTTP server started");
+
+    client.setServer(mqtt_server, 1883);
+    client.setCallback(callback);
+    mqttconnect();
 
     setupLEDS();
 }
 
 void loop()
 {
-    server.handleClient();
-    EVERY_N_MILLIS(60000 / bpm_freq)
-    {
-        gPatterns[gCurrentPatternNumber]();
-        if (gCurrentPatternNumber != 0)
-        { // hack to suppress flickering caused by setting colors shortly after each other
-            FastLED.show();
-        }
-        maybeChangeHue();
+      /* if client was disconnected then try to reconnect again */
+    if (!client.connected()) {
+        mqttconnect();
     }
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Wifi disconnected. Reconnecting...");
+        WiFi.reconnect();
+    }
+    client.loop();
+    server.handleClient();
+
+    gPatterns[gCurrentPatternNumber]();
+    if (gCurrentPatternNumber != 0)
+    { // hack to suppress flickering caused by setting colors shortly after each other
+        FastLED.show();
+    }
+    maybeChangeHue();
+    delay(60000 / bpm_freq);
     /** Check color correction
     Serial.println("Corrected");
     FastLED.setCorrection(TypicalLEDStrip);
